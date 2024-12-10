@@ -1,14 +1,20 @@
 from mnist import MNIST
 
+# In run_mnist_multiclass.py
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import minitorch
+BACKEND = minitorch.TensorBackend(minitorch.FastOps)
 
 mndata = MNIST("project/data/")
 images, labels = mndata.load_training()
 
-BACKEND = minitorch.TensorBackend(minitorch.FastOps)
+# BACKEND = minitorch.TensorBackend(minitorch.FastOps)
 BATCH = 16
 
-# Number of classes (10 digits)
+# Number of classes (10 digits) 
 C = 10
 
 # Size of images (height and width)

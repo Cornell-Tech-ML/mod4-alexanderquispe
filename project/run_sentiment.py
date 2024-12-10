@@ -1,3 +1,7 @@
+import os.path
+# Set HOME environment variable for Windows
+os.environ['HOME'] = os.path.expanduser('~')
+
 import random
 
 import embeddings
@@ -6,6 +10,7 @@ import minitorch
 from datasets import load_dataset
 
 BACKEND = minitorch.TensorBackend(minitorch.FastOps)
+
 
 
 def RParam(*shape):
@@ -34,8 +39,21 @@ class Conv1d(minitorch.Module):
         self.bias = RParam(1, out_channels, 1)
 
     def forward(self, input):
-        # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+        """
+        Forward pass for 1D Convolution.
+
+        Args:
+            input: Tensor of shape (batch_size, in_channels, width)
+
+        Returns:
+            Tensor of shape (batch_size, out_channels, width)
+        """
+        # Apply convolution using weights
+        conv_output = minitorch.Conv1dFun.apply(input, self.weights.value)
+        
+        # Add bias (need to broadcast across width dimension)
+        # bias shape is (1, out_channels, 1), will broadcast to output shape
+        return conv_output + self.bias.value
 
 
 class CNNSentimentKim(minitorch.Module):
@@ -53,23 +71,51 @@ class CNNSentimentKim(minitorch.Module):
     """
 
     def __init__(
-        self,
-        feature_map_size=100,
-        embedding_size=50,
-        filter_sizes=[3, 4, 5],
-        dropout=0.25,
-    ):
-        super().__init__()
-        self.feature_map_size = feature_map_size
-        # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+            self,
+            feature_map_size=100,
+            embedding_size=50,
+            filter_sizes=[3, 4, 5],
+            dropout=0.25,
+        ):
+            super().__init__()
+            self.feature_map_size = feature_map_size
+            self.dropout = dropout
+            
+            # Create convolution layers for each filter size
+            self.convs = []
+            for filter_size in filter_sizes:
+                conv = Conv1d(embedding_size, feature_map_size, filter_size)
+                self.convs.append(conv)
+            
+            # Linear layer for final classification
+            total_features = feature_map_size * len(filter_sizes)
+            self.linear = Linear(total_features, 1)
 
     def forward(self, embeddings):
-        """
-        embeddings tensor: [batch x sentence length x embedding dim]
-        """
-        # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+        # Reshape input for Conv1d: [batch x embedding dim x sentence length]
+        embeddings = embeddings.permute(0, 2, 1)
+        
+        # Apply each convolution layer
+        conv_outputs = []
+        for conv in self.convs:
+            # Apply convolution with ReLU
+            out = conv(embeddings)
+            out = out.relu()
+            
+            # Max-over-time pooling
+            out = out.max(2)[0]
+            conv_outputs.append(out)
+        
+        # Concatenate all conv outputs
+        combined = minitorch.cat(conv_outputs, 1)
+        
+        # Apply Linear layer, ReLU, and Dropout
+        out = self.linear(combined)
+        out = out.relu()
+        out = minitorch.dropout(out, self.dropout)
+        
+        # Apply sigmoid for final output
+        return out.sigmoid()
 
 
 # Evaluation helper methods
