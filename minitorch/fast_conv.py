@@ -91,7 +91,35 @@ def _tensor_conv1d(
     s2 = weight_strides
 
     # TODO: Implement for Task 4.1.
-    raise NotImplementedError("Need to implement for Task 4.1")
+    # Parallelize only the batch and output channel dimensions
+    for b in prange(batch):
+        for oc in prange(out_channels):
+            for ow in range(out_width):
+                out_pos = (b * out_strides[0] + 
+                          oc * out_strides[1] + 
+                          ow * out_strides[2])
+                acc = 0.0
+                
+                # Handle the convolution differently based on reverse flag
+                for ic in range(in_channels):
+                    for k in range(kw):
+                        if reverse:
+                            # For backward pass (reverse=True)
+                            w_k = kw - 1 - k  # Flip the kernel
+                            in_index = ow - k  # Shift input index
+                            if 0 <= in_index < width:
+                                w_pos = (oc * s2[0] + ic * s2[1] + w_k * s2[2])
+                                in_pos = (b * s1[0] + ic * s1[1] + in_index * s1[2])
+                                acc += input[in_pos] * weight[w_pos]
+                        else:
+                            # For forward pass (reverse=False)
+                            in_index = ow + k
+                            if in_index < width:
+                                w_pos = (oc * s2[0] + ic * s2[1] + k * s2[2])
+                                in_pos = (b * s1[0] + ic * s1[1] + in_index * s1[2])
+                                acc += input[in_pos] * weight[w_pos]
+                                
+                out[out_pos] = acc
 
 
 tensor_conv1d = njit(_tensor_conv1d, parallel=True)
@@ -220,7 +248,60 @@ def _tensor_conv2d(
     s20, s21, s22, s23 = s2[0], s2[1], s2[2], s2[3]
 
     # TODO: Implement for Task 4.2.
-    raise NotImplementedError("Need to implement for Task 4.2")
+    # Parallelize over batch and output channels
+    # Optimized version
+    for batch_idx in prange(batch_):
+        for out_channel in prange(out_channels):
+            for height_pos in range(out_shape[2]):  # Height position in output
+                for width_pos in range(out_shape[3]):  # Width position in output
+                    # Calculate position in output tensor
+                    out_position = (batch_idx * out_strides[0] + 
+                                out_channel * out_strides[1] + 
+                                height_pos * out_strides[2] + 
+                                width_pos * out_strides[3])
+                    
+                    # Initialize accumulator for convolution sum
+                    conv_sum = 0.0
+                    
+                    # Iterate through input channels and kernel dimensions
+                    for in_channel in range(in_channels):
+                        for kernel_h in range(kh):  # Kernel height position
+                            for kernel_w in range(kw):  # Kernel width position
+                                if not reverse:  # Forward pass
+                                    if (height_pos + kernel_h) < height and (width_pos + kernel_w) < width:
+                                        # Calculate input tensor position
+                                        input_pos = (batch_idx * s10 + 
+                                                in_channel * s11 + 
+                                                (height_pos + kernel_h) * s12 + 
+                                                (width_pos + kernel_w) * s13)
+                                        
+                                        # Calculate weight tensor position
+                                        weight_pos = (out_channel * s20 + 
+                                                    in_channel * s21 + 
+                                                    kernel_h * s22 + 
+                                                    kernel_w * s23)
+                                        
+                                        # Accumulate convolution result
+                                        conv_sum += input[input_pos] * weight[weight_pos]
+                                else:  # Backward pass
+                                    if (height_pos - kernel_h) >= 0 and (width_pos - kernel_w) >= 0:
+                                        # Calculate input tensor position for backward pass
+                                        input_pos = (batch_idx * s10 + 
+                                                in_channel * s11 + 
+                                                (height_pos - kernel_h) * s12 + 
+                                                (width_pos - kernel_w) * s13)
+                                        
+                                        # Calculate weight tensor position
+                                        weight_pos = (out_channel * s20 + 
+                                                    in_channel * s21 + 
+                                                    kernel_h * s22 + 
+                                                    kernel_w * s23)
+                                        
+                                        # Accumulate convolution result
+                                        conv_sum += input[input_pos] * weight[weight_pos]
+                    
+                    # Store final result in output tensor
+                    out[out_position] = conv_sum
 
 
 tensor_conv2d = njit(_tensor_conv2d, parallel=True, fastmath=True)
