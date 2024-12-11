@@ -2,15 +2,19 @@ import os.path
 # Set HOME environment variable for Windows
 os.environ['HOME'] = os.path.expanduser('~')
 
+
 import random
 
 import embeddings
 
 import minitorch
+
 from datasets import load_dataset
 
-BACKEND = minitorch.TensorBackend(minitorch.FastOps)
+# from numba import config 
+# config.DISABLE_JIT = True
 
+BACKEND = minitorch.TensorBackend(minitorch.FastOps)
 
 
 def RParam(*shape):
@@ -26,7 +30,8 @@ class Linear(minitorch.Module):
         self.out_size = out_size
 
     def forward(self, x):
-        batch, in_size = x.shape
+        batch, i, d = x.shape
+        in_size = i * d
         return (
             x.view(batch, in_size) @ self.weights.value.view(in_size, self.out_size)
         ).view(batch, self.out_size) + self.bias.value
@@ -39,21 +44,8 @@ class Conv1d(minitorch.Module):
         self.bias = RParam(1, out_channels, 1)
 
     def forward(self, input):
-        """
-        Forward pass for 1D Convolution.
-
-        Args:
-            input: Tensor of shape (batch_size, in_channels, width)
-
-        Returns:
-            Tensor of shape (batch_size, out_channels, width)
-        """
-        # Apply convolution using weights
-        conv_output = minitorch.Conv1dFun.apply(input, self.weights.value)
-        
-        # Add bias (need to broadcast across width dimension)
-        # bias shape is (1, out_channels, 1), will broadcast to output shape
-        return conv_output + self.bias.value
+        # TODO: Implement for Task 4.5.
+        return minitorch.conv1d(input, self.weights.value) + self.bias.value
 
 
 class CNNSentimentKim(minitorch.Module):
@@ -71,51 +63,34 @@ class CNNSentimentKim(minitorch.Module):
     """
 
     def __init__(
-            self,
-            feature_map_size=100,
-            embedding_size=50,
-            filter_sizes=[3, 4, 5],
-            dropout=0.25,
-        ):
-            super().__init__()
-            self.feature_map_size = feature_map_size
-            self.dropout = dropout
-            
-            # Create convolution layers for each filter size
-            self.convs = []
-            for filter_size in filter_sizes:
-                conv = Conv1d(embedding_size, feature_map_size, filter_size)
-                self.convs.append(conv)
-            
-            # Linear layer for final classification
-            total_features = feature_map_size * len(filter_sizes)
-            self.linear = Linear(total_features, 1)
+        self,
+        feature_map_size=100,
+        embedding_size=50,
+        filter_sizes=[3, 4, 5],
+        dropout=0.25,
+    ):
+        super().__init__()
+        self.feature_map_size = feature_map_size
+        # TODO: Implement for Task 4.5.
+        self.conv1 = Conv1d(embedding_size, feature_map_size, filter_sizes[0])
+        self.conv2 = Conv1d(embedding_size, feature_map_size, filter_sizes[1])
+        self.conv3 = Conv1d(embedding_size, feature_map_size, filter_sizes[2])
+        self.linear = Linear(feature_map_size, 1)
+        self.dropout = dropout
 
     def forward(self, embeddings):
-        # Reshape input for Conv1d: [batch x embedding dim x sentence length]
+        """
+        embeddings tensor: [batch x sentence length x embedding dim]
+        """
+        # TODO: Implement for Task 4.5.
         embeddings = embeddings.permute(0, 2, 1)
-        
-        # Apply each convolution layer
-        conv_outputs = []
-        for conv in self.convs:
-            # Apply convolution with ReLU
-            out = conv(embeddings)
-            out = out.relu()
-            
-            # Max-over-time pooling
-            out = out.max(2)[0]
-            conv_outputs.append(out)
-        
-        # Concatenate all conv outputs
-        combined = minitorch.cat(conv_outputs, 1)
-        
-        # Apply Linear layer, ReLU, and Dropout
-        out = self.linear(combined)
-        out = out.relu()
-        out = minitorch.dropout(out, self.dropout)
-        
-        # Apply sigmoid for final output
-        return out.sigmoid()
+        out1 = self.conv1.forward(embeddings).relu()
+        out2 = self.conv2.forward(embeddings).relu()
+        out3 = self.conv3.forward(embeddings).relu()
+        x = minitorch.nn.max(out1, 2) + minitorch.nn.max(out2, 2) + minitorch.nn.max(out3, 2)
+        l = self.linear.forward(x)
+        l = minitorch.dropout(l, self.dropout)
+        return l.sigmoid().view(embeddings.shape[0])
 
 
 # Evaluation helper methods
@@ -133,7 +108,7 @@ def get_predictions_array(y_true, model_output):
 
 def get_accuracy(predictions_array):
     correct = 0
-    for y_true, y_pred, logit in predictions_array:
+    for (y_true, y_pred, logit) in predictions_array:
         if y_true == y_pred:
             correct += 1
     return correct / len(predictions_array)
@@ -268,6 +243,7 @@ def encode_sentences(
 
 
 def encode_sentiment_data(dataset, pretrained_embeddings, N_train, N_val=0):
+
     #  Determine max sentence length for padding
     max_sentence_len = 0
     for sentence in dataset["train"]["sentence"] + dataset["validation"]["sentence"]:
